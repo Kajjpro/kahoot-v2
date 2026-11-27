@@ -1,5 +1,6 @@
 "use client";
 import type { Question, QuestionType, Quiz } from "@/shared/types";
+import { generalKnowledgeQuiz } from "./general";
 import { sampleQuiz } from "./sample";
 
 const KEY = "dash.quizzes.v1";
@@ -21,6 +22,7 @@ export function listQuizzes(): Quiz[] {
 
 export function getQuiz(id: string): Quiz | null {
   if (id === "sample") return sampleQuiz();
+  if (id === "general") return generalKnowledgeQuiz();
   return listQuizzes().find((q) => q.id === id) ?? null;
 }
 

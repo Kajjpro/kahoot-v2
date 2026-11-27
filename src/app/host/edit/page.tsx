@@ -33,7 +33,7 @@ function Edit() {
 
   useEffect(() => {
     const q = getQuiz(id);
-    if (!q || id === "sample") setMissing(true);
+    if (!q || id === "sample" || id === "general") setMissing(true);
     else setQuiz(q);
   }, [id]);
 

@@ -6,6 +6,7 @@ import type { Quiz } from "@/shared/types";
 import { quizProblem } from "@/shared/validate";
 import { Logo, TYPE_INFO, TypeIcon } from "@/components/Marks";
 import { blankQuiz, deleteQuiz, listQuizzes, saveQuiz } from "@/lib/quizzes";
+import { generalKnowledgeQuiz } from "@/lib/general";
 import { sampleQuiz } from "@/lib/sample";
 import { useHostLaunch } from "@/lib/launch";
 
@@ -28,7 +29,10 @@ export default function HostHome() {
     setQuizzes(listQuizzes());
   };
 
-  const sample = sampleQuiz();
+  const builtIn = [
+    { quiz: sampleQuiz(), blurb: "Seven questions, one of every type. Good for a first try." },
+    { quiz: generalKnowledgeQuiz(), blurb: "Fifteen questions about the world, science and history. Ready to play." },
+  ];
 
   return (
     <main className="on-light library">
@@ -50,18 +54,20 @@ export default function HostHome() {
         )}
 
         <ul className="library__list">
-          <li className="qcard qcard--sample">
-            <div className="qcard__main">
-              <h2 className="qcard__title">{sample.title}</h2>
-              <p className="qcard__meta">A ready-made quiz with every question type. Good for a first try.</p>
-              <TypeStrip quiz={sample} />
-            </div>
-            <div className="qcard__actions">
-              <button type="button" className="btn btn--go btn--small" onClick={() => launch(sample)} disabled={launching}>
-                Host it
-              </button>
-            </div>
-          </li>
+          {builtIn.map(({ quiz, blurb }) => (
+            <li key={quiz.id} className="qcard qcard--sample">
+              <div className="qcard__main">
+                <h2 className="qcard__title">{quiz.title}</h2>
+                <p className="qcard__meta">{blurb}</p>
+                <TypeStrip quiz={quiz} />
+              </div>
+              <div className="qcard__actions">
+                <button type="button" className="btn btn--go btn--small" onClick={() => launch(quiz)} disabled={launching}>
+                  Host it
+                </button>
+              </div>
+            </li>
+          ))}
 
           {quizzes?.map((q) => {
             const problem = quizProblem(q);
