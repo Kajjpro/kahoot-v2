@@ -3,6 +3,8 @@ import { accuracyOf, isPoll, normalizeText, pointsFor, RIGHT_THRESHOLD, textMatc
 import type {
   Answer,
   Fastest,
+  ItemEvent,
+  ItemKind,
   HostView,
   MyResult,
   Phase,
@@ -41,7 +43,24 @@ export interface Player {
   /** Snapshot taken when the previous leaderboard was shown. */
   prevRank: number | null;
   prevScore: number;
+  /* power-ups */
+  item: ItemKind | null;
+  shield: boolean;
+  /** Question index Nitro is lit for. */
+  nitroQ: number | null;
+  hits: { kind: "banana" | "smoke"; from: string; q: number }[];
+  /** Question index at which the current item was picked up. */
+  gotItemAt: number | null;
+  lastReactAt: number;
 }
+
+/** Weighted bag the item box draws from. */
+const ITEM_BAG: ItemKind[] = ["nitro", "nitro", "nitro", "banana", "banana", "banana", "smoke", "smoke", "smoke", "shield", "shield"];
+const drawItem = (): ItemKind => (process.env.FORCE_ITEM as ItemKind) || ITEM_BAG[randomInt(ITEM_BAG.length)];
+
+/** Chances in percent. Override with env vars to test (e.g. TURBO_CHANCE=100). */
+const TURBO_CHANCE = Number(process.env.TURBO_CHANCE ?? 25);
+const COMEBACK_ITEM_CHANCE = Number(process.env.COMEBACK_ITEM_CHANCE ?? 60);
 
 export interface RoomHooks {
   /** Something changed that everyone should see. */
@@ -66,6 +85,10 @@ export class Room {
   /** Same shuffle for every player, per order question. */
   private shuffles = new Map<number, string[]>();
   private reveal: Reveal | null = null;
+  /** Turbo multiplier per question index. */
+  private turbos = new Map<number, number>();
+  private feed: ItemEvent[] = [];
+  private eventSeq = 0;
 
   constructor(code: string, quiz: Quiz, private hooks: RoomHooks) {
     this.code = code;
@@ -101,6 +124,12 @@ export class Room {
       answers: new Map(),
       prevRank: null,
       prevScore: 0,
+      item: null,
+      shield: false,
+      nitroQ: null,
+      hits: [],
+      gotItemAt: null,
+      lastReactAt: 0,
     };
     this.players.set(p.id, p);
     this.touch();
@@ -192,7 +221,14 @@ export class Room {
       p.answers.clear();
       p.prevRank = null;
       p.prevScore = 0;
+      p.item = null;
+      p.shield = false;
+      p.nitroQ = null;
+      p.hits = [];
+      p.gotItemAt = null;
     }
+    this.turbos.clear();
+    this.feed = [];
     this.phase = "lobby";
     this.qIndex = -1;
     this.endsAt = null;
@@ -209,6 +245,10 @@ export class Room {
     this.endsAt = Date.now() + COUNTDOWN_MS;
     const q = this.question;
     if (q?.type === "order") this.shuffles.set(i, shuffleNotSolved(q.items.map((x) => x.id)));
+    // Turbo round: after the first question, about one in four scoring questions gets a multiplier.
+    if (q && i > 0 && q.points !== "none" && !isPoll(q) && !this.turbos.has(i)) {
+      this.turbos.set(i, randomInt(100) < TURBO_CHANCE ? (randomInt(100) < 70 ? 2 : 3) : 1);
+    }
     this.timer = setTimeout(() => this.openAnswers(), COUNTDOWN_MS);
     this.hooks.changed(this);
   }
@@ -269,6 +309,8 @@ export class Room {
     for (const p of this.players.values()) {
       const rec = p.answers.get(this.qIndex);
       if (poll || q.points === "none") {
+        // Nitro lit for a no-points question carries over to the next one.
+        if (p.nitroQ === this.qIndex) p.nitroQ = this.qIndex + 1;
         if (rec) rec.accuracy = poll ? 0 : accuracyOf(q, rec.answer);
         continue; // polls and no-points rounds don't touch scores or streaks
       }
@@ -278,16 +320,112 @@ export class Room {
       }
       rec.accuracy = accuracyOf(q, rec.answer);
       p.streak = rec.accuracy >= RIGHT_THRESHOLD ? p.streak + 1 : 0;
-      rec.points = pointsFor({
-        accuracy: rec.accuracy,
-        timeMs: rec.timeMs,
-        limitMs,
-        mode: q.points,
-        streakAfter: p.streak,
-      });
+      rec.points =
+        pointsFor({
+          accuracy: rec.accuracy,
+          timeMs: rec.timeMs,
+          limitMs,
+          mode: q.points,
+          streakAfter: p.streak,
+        }) * this.multiplierFor(p);
       p.score += rec.points;
     }
     this.reveal = this.buildReveal(q);
+    if (!poll && q.points !== "none") this.handOutItems();
+  }
+
+  turboFor(i: number): number {
+    return this.turbos.get(i) ?? 1;
+  }
+
+  private multiplierFor(p: Player): number {
+    return this.turboFor(this.qIndex) * (p.nitroQ === this.qIndex ? 2 : 1);
+  }
+
+  /**
+   * Item boxes: three right in a row always earns one, and anyone in the
+   * bottom half has a good chance of one, so the back of the pack can fight back.
+   */
+  private handOutItems() {
+    const ranked = this.ranked();
+    const half = Math.ceil(ranked.length / 2);
+    ranked.forEach((r, idx) => {
+      const p = this.players.get(r.id);
+      if (!p || p.item) return;
+      const streakBox = p.streak > 0 && p.streak % 3 === 0;
+      const comeback = ranked.length > 1 && idx >= half && randomInt(100) < COMEBACK_ITEM_CHANCE;
+      if (streakBox || comeback) {
+        p.item = drawItem();
+        p.gotItemAt = this.qIndex;
+      }
+    });
+  }
+
+  /** Who an attack from this player lands on: the runner right ahead, or second place if you lead. */
+  private targetOf(p: Player): Player | null {
+    const ranked = this.ranked();
+    const idx = ranked.findIndex((r) => r.id === p.id);
+    if (idx < 0 || ranked.length < 2) return null;
+    const t = idx === 0 ? ranked[1] : ranked[idx - 1];
+    return this.players.get(t.id) ?? null;
+  }
+
+  private canUseItems(): boolean {
+    if (this.phase === "countdown") return true;
+    if (this.phase === "reveal" || this.phase === "leaderboard") return this.qIndex < this.quiz.questions.length - 1;
+    return false;
+  }
+
+  /** The question an item used right now will affect. */
+  private itemQuestion(): number {
+    return this.phase === "countdown" ? this.qIndex : this.qIndex + 1;
+  }
+
+  useItem(playerId: string): string | null {
+    const p = this.players.get(playerId);
+    if (!p || !p.item) return "You don't have an item.";
+    if (!this.canUseItems()) return "Items work between questions.";
+    const kind = p.item;
+    const qi = this.itemQuestion();
+    let to: Player | null = null;
+    let blocked = false;
+    if (kind === "nitro") {
+      p.nitroQ = qi;
+    } else if (kind === "shield") {
+      p.shield = true;
+    } else {
+      to = this.targetOf(p);
+      if (!to) return "There's nobody to throw it at yet.";
+      if (to.shield) {
+        to.shield = false;
+        blocked = true;
+      } else {
+        to.hits.push({ kind, from: p.name, q: qi });
+      }
+    }
+    p.item = null;
+    p.gotItemAt = null;
+    this.feed.push({
+      id: ++this.eventSeq,
+      kind,
+      from: { name: p.name, avatar: p.avatar },
+      to: to ? { name: to.name, avatar: to.avatar } : null,
+      blocked,
+    });
+    this.feed = this.feed.slice(-6);
+    this.touch();
+    this.hooks.changed(this);
+    return null;
+  }
+
+  /** Rate-limited emoji reactions. Returns false when the player is spamming. */
+  react(playerId: string): Player | null {
+    const p = this.players.get(playerId);
+    if (!p) return null;
+    const now = Date.now();
+    if (now - p.lastReactAt < 600) return null;
+    p.lastReactAt = now;
+    return p;
   }
 
   private toLeaderboard() {
@@ -479,6 +617,7 @@ export class Room {
       question: showQuestion ? this.publicQuestion() : null,
       answeredCount: answered.length,
       playerCount: [...this.players.values()].filter((p) => p.connected).length,
+      turbo: this.qIndex >= 0 && this.phase !== "lobby" && this.phase !== "podium" ? this.turboFor(this.qIndex) : 1,
     };
   }
 
@@ -491,6 +630,7 @@ export class Room {
       answeredIds: this.answeredIds(),
       reveal: this.phase === "reveal" ? this.reveal : null,
       leaderboard: showBoard ? this.ranked() : [],
+      feed: this.feed,
     };
   }
 
@@ -512,6 +652,7 @@ export class Room {
         streak: p.streak,
         rank: me.rank,
         score: p.score,
+        multiplier: this.multiplierFor(p),
         behind: above && above.score > p.score ? { name: above.name, gap: above.score - p.score } : null,
       };
     }
@@ -533,6 +674,20 @@ export class Room {
         this.phase === "lobby"
           ? [...this.players.values()].map((x) => ({ id: x.id, name: x.name, avatar: x.avatar })).slice(-40)
           : [],
+      item: p.item,
+      shield: p.shield,
+      nitro: p.nitroQ != null && p.nitroQ >= this.qIndex && this.phase !== "podium",
+      target: (() => {
+        if (!p.item || (p.item !== "banana" && p.item !== "smoke")) return null;
+        const t = this.targetOf(p);
+        return t ? { name: t.name, avatar: t.avatar } : null;
+      })(),
+      hits:
+        this.phase === "question" || this.phase === "countdown"
+          ? p.hits.filter((h) => h.q === this.qIndex).map(({ kind, from }) => ({ kind, from }))
+          : [],
+      gotItem: this.phase === "reveal" && p.gotItemAt === this.qIndex ? p.item : null,
+      canUseItem: !!p.item && this.canUseItems(),
     };
   }
 }

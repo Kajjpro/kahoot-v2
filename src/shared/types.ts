@@ -98,6 +98,22 @@ export type PublicQuestion =
   | Omit<TypeQuestion, "answers">
   | Omit<PinQuestion, "target" | "radius">;
 
+/* ---------- Power-ups ---------- */
+
+export type ItemKind = "nitro" | "banana" | "smoke" | "shield";
+
+/** Something that happened with an item, shown on the big screen. */
+export interface ItemEvent {
+  id: number;
+  kind: ItemKind;
+  from: { name: string; avatar: number };
+  to: { name: string; avatar: number } | null;
+  blocked: boolean;
+}
+
+export const REACTIONS = ["🔥", "😂", "😱", "👏", "💀", "🤯"] as const;
+export type Reaction = (typeof REACTIONS)[number];
+
 /* ---------- Live game state ---------- */
 
 export type Phase = "lobby" | "countdown" | "question" | "reveal" | "leaderboard" | "podium";
@@ -156,6 +172,8 @@ export interface MyResult {
   streak: number;
   rank: number;
   score: number;
+  /** Multiplier applied (turbo × nitro). */
+  multiplier: number;
   /** Points to the player right above, or null when leading. */
   behind: { name: string; gap: number } | null;
 }
@@ -172,6 +190,8 @@ interface CommonView {
   question: PublicQuestion | null;
   answeredCount: number;
   playerCount: number;
+  /** Points multiplier for this question's Turbo round (1 = normal). */
+  turbo: number;
 }
 
 export interface HostView extends CommonView {
@@ -180,6 +200,7 @@ export interface HostView extends CommonView {
   answeredIds: string[];
   reveal: Reveal | null;
   leaderboard: RankedPlayer[];
+  feed: ItemEvent[];
 }
 
 export interface PlayerView extends CommonView {
@@ -192,6 +213,19 @@ export interface PlayerView extends CommonView {
   leaderboard: RankedPlayer[];
   myRank: number;
   lobbyPlayers: { id: string; name: string; avatar: number }[];
+  /** The power-up in this player's pocket. */
+  item: ItemKind | null;
+  shield: boolean;
+  /** Nitro is lit for the next (or current) question. */
+  nitro: boolean;
+  /** Who an attack would hit right now. */
+  target: { name: string; avatar: number } | null;
+  /** Attacks landing on this player during the current question. */
+  hits: { kind: "banana" | "smoke"; from: string }[];
+  /** Item just picked up at this reveal, to celebrate it. */
+  gotItem: ItemKind | null;
+  /** Whether items can be used right now. */
+  canUseItem: boolean;
 }
 
 export type Ack<T = object> = ({ ok: true } & T) | { ok: false; error: string };

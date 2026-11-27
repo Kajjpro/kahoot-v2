@@ -2,9 +2,10 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import QRCode from "qrcode";
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import type { HostView } from "@/shared/types";
 import { Avatar } from "@/components/Avatar";
+import { ItemFeed, ReactionLayer, TurboReel } from "@/components/Items";
 import { Logo, TYPE_INFO, TypeIcon } from "@/components/Marks";
 import { Podium } from "@/components/Podium";
 import { RaceBoard } from "@/components/RaceBoard";
@@ -13,6 +14,8 @@ import { StartLights } from "@/components/StartLights";
 import { TimerBar } from "@/components/TimerBar";
 import { hostKeyFor } from "@/lib/launch";
 import { getSocket, request } from "@/lib/socket";
+import { isMuted, setMuted, sfx, unlock } from "@/lib/sound";
+import type { ItemEvent } from "@/shared/types";
 
 export default function LivePage() {
   return (
@@ -30,6 +33,18 @@ function Live() {
   const [lost, setLost] = useState<string | null>(null);
   const [offline, setOffline] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [muted, setMutedState] = useState(false);
+
+  useEffect(() => {
+    setMutedState(isMuted());
+    const on = () => unlock();
+    window.addEventListener("pointerdown", on);
+    window.addEventListener("keydown", on);
+    return () => {
+      window.removeEventListener("pointerdown", on);
+      window.removeEventListener("keydown", on);
+    };
+  }, []);
 
   const resume = useCallback(async () => {
     const hostKey = sessionStorage.getItem(hostKeyFor(code));
@@ -130,10 +145,25 @@ function Live() {
         <span className="host__code" aria-label={`Game code ${view.code}`}>
           {view.phase !== "lobby" && <>Code {spaced(view.code)}</>}
         </span>
+        <button
+          type="button"
+          className="btn btn--quiet host__mute"
+          onClick={() => {
+            unlock();
+            setMuted(!muted);
+            setMutedState(!muted);
+          }}
+          aria-pressed={muted}
+        >
+          {muted ? "Sound off" : "Sound on"}
+        </button>
         <button type="button" className="btn btn--quiet" onClick={close}>
           {view.phase === "podium" ? "Done" : "Close game"}
         </button>
       </header>
+      <SoundDirector view={view} />
+      <ReactionLayer />
+      <ItemFeed feed={view.feed} onNew={playItem} />
 
       {actionError && (
         <p className="error host__error" role="alert">
@@ -164,6 +194,7 @@ function HostScreen({ view, act, onDone }: { view: HostView; act: (e: string) =>
             {q.points === "double" && <span className="tag tag--double">Double points</span>}
             {q.points === "none" && <span className="tag">No points</span>}
           </p>
+          {view.turbo > 1 && <TurboReel value={view.turbo} />}
           <h1 className="h-ready__prompt">{q.prompt}</h1>
           <StartLights endsAt={view.endsAt} serverNow={view.serverNow} />
         </section>
@@ -174,6 +205,7 @@ function HostScreen({ view, act, onDone }: { view: HostView; act: (e: string) =>
       return (
         <section className="h-q">
           <TimerBar endsAt={view.endsAt} serverNow={view.serverNow} limit={q.timeLimit} />
+          {view.turbo > 1 && <span className="tag tag--double h-q__turbo">Turbo ×{view.turbo}</span>}
           <h1 className="h-q__prompt">{q.prompt}</h1>
           <QuestionStage q={q} />
           <footer className="h-foot">
@@ -344,4 +376,64 @@ function Finale({ view, onRestart, onDone }: { view: HostView; onRestart: () => 
 
 function spaced(code: string) {
   return `${code.slice(0, 3)} ${code.slice(3)}`;
+}
+
+function playItem(e: ItemEvent) {
+  if (e.blocked || e.kind === "shield") sfx.shield();
+  else if (e.kind === "nitro") sfx.nitro();
+  else sfx.splat();
+}
+
+/** Plays the right sounds as the game moves from step to step. */
+function SoundDirector({ view }: { view: HostView }) {
+  const key = `${view.phase}:${view.questionIndex}`;
+  const lastAnswered = useRef(0);
+
+  useEffect(() => {
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    const at = (ms: number, fn: () => void) => timers.push(setTimeout(fn, ms));
+    const offset = view.serverNow - Date.now();
+    const left = (view.endsAt ?? 0) - (Date.now() + offset);
+
+    switch (view.phase) {
+      case "countdown": {
+        const elapsed = 4000 - left;
+        for (let i = 0; i < 5; i++) if (i * 600 >= elapsed - 50) at(i * 600 - elapsed, sfx.light);
+        at(3300 - elapsed, sfx.go);
+        if (view.turbo > 1) {
+          for (let i = 0; i < 10; i++) at(i * 120, sfx.reel);
+          at(1300, sfx.turbo);
+        }
+        break;
+      }
+      case "question":
+        for (let s = 5; s >= 1; s--) {
+          const when = left - s * 1000;
+          if (when > 0) at(when, sfx.tick);
+        }
+        break;
+      case "reveal":
+        sfx.reveal();
+        break;
+      case "leaderboard":
+        sfx.whoosh();
+        break;
+      case "podium":
+        at(700, sfx.third);
+        at(2100, sfx.second);
+        at(3500, () => sfx.drumroll(1.6));
+        at(5200, sfx.fanfare);
+        break;
+    }
+    lastAnswered.current = 0;
+    return () => timers.forEach(clearTimeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+
+  useEffect(() => {
+    if (view.phase === "question" && view.answeredCount > lastAnswered.current) sfx.lockIn();
+    lastAnswered.current = view.answeredCount;
+  }, [view.answeredCount, view.phase]);
+
+  return null;
 }

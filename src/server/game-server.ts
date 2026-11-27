@@ -1,6 +1,6 @@
 import { randomInt } from "node:crypto";
 import type { Server, Socket } from "socket.io";
-import type { Ack, Answer, Quiz } from "../shared/types";
+import { REACTIONS, type Ack, type Answer, type Quiz } from "../shared/types";
 import { looksLikeQuiz, quizProblem } from "../shared/validate";
 import { Room, type Player } from "./room";
 
@@ -167,6 +167,22 @@ export function attachGameServer(io: Server) {
       if (!playerOf) return reply({ ok: false, error: "You're not in a game." });
       const err = playerOf.room.submit(playerOf.id, Number(raw?.questionIndex), raw?.answer);
       reply(err ? { ok: false, error: err } : { ok: true });
+    });
+
+    socket.on("player:item", (_: unknown, reply: Reply) => {
+      if (typeof reply !== "function") return;
+      if (!playerOf) return reply({ ok: false, error: "You're not in a game." });
+      const err = playerOf.room.useItem(playerOf.id);
+      reply(err ? { ok: false, error: err } : { ok: true });
+    });
+
+    socket.on("player:react", (raw: { emoji: string }) => {
+      if (!playerOf) return;
+      const emoji = String(raw?.emoji ?? "");
+      if (!(REACTIONS as readonly string[]).includes(emoji)) return;
+      const room = playerOf.room;
+      const p = room.react(playerOf.id);
+      if (p && room.hostSocketId) io.to(room.hostSocketId).emit("reaction", { emoji, avatar: p.avatar, name: p.name });
     });
 
     socket.on("player:leave", () => {

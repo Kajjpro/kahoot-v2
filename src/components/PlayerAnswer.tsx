@@ -8,16 +8,41 @@ interface Props {
   q: PublicQuestion;
   onAnswer: (a: Answer) => void;
   busy: boolean;
+  /** Hit by a banana: answer tiles keep sliding around. */
+  slippery?: boolean;
+}
+
+/** New positions for the tiles every so often while slippery. */
+function useSlipOrder(n: number, slippery: boolean): number[] {
+  const [order, setOrder] = useState(() => Array.from({ length: n }, (_, i) => i));
+  useEffect(() => {
+    if (!slippery) return;
+    const shuffle = () =>
+      setOrder((prev) => {
+        const a = prev.slice();
+        for (let i = a.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [a[i], a[j]] = [a[j], a[i]];
+        }
+        return a;
+      });
+    shuffle();
+    const t = setInterval(shuffle, 1300);
+    return () => clearInterval(t);
+  }, [slippery]);
+  return order;
 }
 
 /** The answer controls on a player's phone, one per question type. */
-export function PlayerAnswer({ q, onAnswer, busy }: Props) {
+export function PlayerAnswer({ q, onAnswer, busy, slippery = false }: Props) {
+  const slots = useSlipOrder(q.type === "choice" ? q.options.length : 2, slippery && (q.type === "choice" || q.type === "truefalse"));
+  const slip = (i: number) => (slippery ? { order: slots[i] } : undefined);
   switch (q.type) {
     case "choice":
       return (
-        <ul className={`tiles tiles--${q.options.length} tiles--play`}>
+        <ul className={`tiles tiles--${q.options.length} tiles--play${slippery ? " is-slippery" : ""}`}>
           {q.options.map((o, i) => (
-            <li key={o.id}>
+            <li key={o.id} style={slip(i)}>
               <button
                 type="button"
                 className="tile"
@@ -34,14 +59,14 @@ export function PlayerAnswer({ q, onAnswer, busy }: Props) {
       );
     case "truefalse":
       return (
-        <ul className="tiles tiles--2 tiles--play">
-          <li>
+        <ul className={`tiles tiles--2 tiles--play${slippery ? " is-slippery" : ""}`}>
+          <li style={slip(0)}>
             <button type="button" className="tile tile--true" disabled={busy} onClick={() => onAnswer({ type: "truefalse", value: true })}>
               <Shape i={0} />
               <span>True</span>
             </button>
           </li>
-          <li>
+          <li style={slip(1)}>
             <button type="button" className="tile tile--false" disabled={busy} onClick={() => onAnswer({ type: "truefalse", value: false })}>
               <Shape i={2} />
               <span>False</span>

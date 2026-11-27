@@ -20,6 +20,27 @@ Every question can also have a picture, a time limit (5 s to 2 min) and normal, 
 
 **A question ends** as soon as every connected player has answered, or when the time runs out, whichever comes first.
 
+## Chaos features
+
+**Power-ups (item boxes).** Get three right in a row and you earn an item. Players in the bottom half also have a good chance of getting one after each question, so whoever is behind can fight back. You can hold one item at a time and use it between questions:
+
+| Item | What it does |
+| --- | --- |
+| 🔥 Nitro | Doubles your points on the next question |
+| 🍌 Banana | Thrown at the player right ahead of you (or 2nd place if you're leading). Their answer tiles slide around and swap places for a whole question |
+| 💨 Smoke bomb | Thrown the same way. Their screen fills with smoke that they have to wipe off with a finger |
+| 🛡 Shield | Blocks the next banana or smoke bomb thrown at you |
+
+Every item that gets used pops up as a message on the big screen.
+
+**Turbo rounds.** After the first question, about one question in four becomes a Turbo round. A slot reel spins on the big screen and lands on ×2 or ×3 points.
+
+**Live reactions.** Players tap 🔥 😂 😱 👏 💀 🤯 on their phone, and the emoji float up the big screen along with the player's character.
+
+**Sound.** The big screen beeps with each start light, ticks during the last 5 seconds, chimes at the reveal, and plays a drumroll and fanfare for the podium. Everything is generated in the browser, so there are no audio files. The host can switch it off with "Sound on/off".
+
+For testing you can force things on with environment variables, for example `TURBO_CHANCE=100`, `COMEBACK_ITEM_CHANCE=100` or `FORCE_ITEM=smoke`.
+
 ## Run it on your computer
 
 You need Node 20 or newer.

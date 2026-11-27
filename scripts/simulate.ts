@@ -65,6 +65,9 @@ async function main() {
   for (let qi = 0; qi < sampleQuiz().questions.length; qi++) {
     // wait for answers to open
     while (H().phase !== "question") await sleep(50);
+    await sleep(100);
+    for (const b of bots) if (b.v?.hits.length) console.log(`   ${b.v.me.name} is hit by ${b.v.hits.map((h) => h.kind + " from " + h.from).join(", ")}${b.v.nitro ? " (nitro lit)" : ""}`);
+    for (const b of bots) if (b.v?.nitro && !b.v.hits.length) console.log(`   ${b.v.me.name} has nitro lit`);
     const opened = Date.now();
     await Promise.all(
       bots.map(async (b) => {
@@ -83,6 +86,17 @@ async function main() {
     );
     const r0 = bots[0].v!.result!;
     console.log(`   Bot 1 sees: correct=${r0.correct} +${r0.points} rank ${r0.rank}`);
+    if (H().turbo > 1) console.log(`   Turbo round x${H().turbo}`);
+    // Bots use any item they picked up, and send a reaction.
+    for (const b of bots) {
+      b.s.emit("player:react", { emoji: "🔥" });
+      if (b.v?.canUseItem && b.v.item) {
+        const kind = b.v.item;
+        const res = await ask<{ ok: boolean; error?: string }>(b.s, "player:item", {});
+        console.log(`   ${b.v.me.name} used ${kind}${b.v.target ? ` on ${b.v.target.name}` : ""}: ${res.ok ? "ok" : res.error}`);
+      }
+    }
+    await sleep(100);
     // Answering again after close must fail.
     const late = await ask<{ ok: boolean }>(bots[0].s, "player:answer", { questionIndex: qi, answer: { type: "truefalse", value: true } });
     if (late.ok) throw new Error("Late answer was accepted");
@@ -94,6 +108,7 @@ async function main() {
     }
   }
   while (H().phase !== "podium") await sleep(50);
+  console.log("Item feed on big screen:", H().feed.map((e) => `${e.from.name} ${e.kind}${e.to ? " -> " + e.to.name : ""}${e.blocked ? " (blocked)" : ""}`).join("; "));
   console.log("Podium:", H().leaderboard.slice(0, 3).map((p) => `${p.rank}. ${p.name} ${p.score}`).join("  "));
   console.log("Bot 5 sees podium with", bots[4]?.v?.leaderboard.length, "players, own rank", bots[4]?.v?.myRank);
 

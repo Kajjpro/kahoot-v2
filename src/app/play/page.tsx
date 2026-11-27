@@ -5,6 +5,7 @@ import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import type { Answer, PlayerView } from "@/shared/types";
 import { Avatar, randomSeed } from "@/components/Avatar";
 import { Flame, Logo, ordinal, seconds, TYPE_INFO } from "@/components/Marks";
+import { ItemIcon, ItemPocket, ReactionBar, SmokeOverlay, TurboReel } from "@/components/Items";
 import { PlayerAnswer } from "@/components/PlayerAnswer";
 import { Podium } from "@/components/Podium";
 import { rightAnswerText } from "@/components/Stage";
@@ -302,6 +303,36 @@ function PlayerScreen({
   onLeave: () => void;
 }) {
   const q = view.question;
+  const [itemBusy, setItemBusy] = useState(false);
+  const [itemError, setItemError] = useState<string | null>(null);
+  const [smokeGone, setSmokeGone] = useState<number | null>(null);
+
+  useEffect(() => setItemError(null), [view.phase, view.questionIndex]);
+
+  const fireItem = async () => {
+    setItemBusy(true);
+    setItemError(null);
+    const res = await request("player:item", {});
+    setItemBusy(false);
+    if (!res.ok) setItemError(res.error);
+  };
+
+  const pocket = (
+    <ItemPocket
+      item={view.item}
+      shield={view.shield}
+      nitro={view.nitro}
+      target={view.target}
+      fresh={!!view.gotItem}
+      canUse={view.canUseItem}
+      onUse={fireItem}
+      busy={itemBusy}
+      error={itemError}
+    />
+  );
+
+  const banana = view.hits.find((h) => h.kind === "banana");
+  const smoke = view.hits.find((h) => h.kind === "smoke");
 
   switch (view.phase) {
     case "lobby":
@@ -322,6 +353,7 @@ function PlayerScreen({
                 ))}
             </ul>
           )}
+          <ReactionBar />
           <button type="button" className="btn btn--quiet" onClick={onLeave}>
             Leave game
           </button>
@@ -336,8 +368,16 @@ function PlayerScreen({
             Question {view.questionIndex + 1} of {view.questionCount}, {TYPE_INFO[q.type].name.toLowerCase()}
             {q.points === "double" ? ", double points" : ""}
           </p>
+          {view.turbo > 1 && <TurboReel value={view.turbo} compact />}
           <h1 className="p-ready__prompt">{q.prompt}</h1>
           <StartLights endsAt={view.endsAt} serverNow={view.serverNow} compact />
+          {view.hits.map((h, i) => (
+            <p key={i} className="p-ready__hit">
+              <ItemIcon kind={h.kind} size={28} />
+              {h.from} {h.kind === "banana" ? "threw a banana at you" : "smoked you"}
+            </p>
+          ))}
+          {pocket}
         </section>
       );
 
@@ -355,12 +395,20 @@ function PlayerScreen({
             <p className="hint" aria-live="polite">
               {view.answeredCount} of {view.playerCount} have answered
             </p>
+            <ReactionBar />
           </section>
         );
       }
       return (
-        <section className={`p-q p-q--${q.type}`}>
+        <section className={`p-q p-q--${q.type}${view.nitro ? " is-nitro" : ""}${banana && q.type !== "choice" && q.type !== "truefalse" ? " is-wobbly" : ""}`}>
           <TimerBar endsAt={view.endsAt} serverNow={view.serverNow} limit={q.timeLimit} />
+          {(view.nitro || view.turbo > 1 || banana) && (
+            <p className="p-q__boosts">
+              {view.turbo > 1 && <span className="boost boost--turbo">Turbo ×{view.turbo}</span>}
+              {view.nitro && <span className="boost boost--nitro">Nitro ×2</span>}
+              {banana && <span className="boost boost--banana">Slippery! ({banana.from})</span>}
+            </p>
+          )}
           <h1 className="p-q__prompt">{q.prompt}</h1>
           {q.image && q.type !== "pin" && (
             // eslint-disable-next-line @next/next/no-img-element
@@ -372,18 +420,44 @@ function PlayerScreen({
               {answerError}
             </p>
           )}
-          <PlayerAnswer key={`${view.questionIndex}-${q.id}`} q={q} onAnswer={onAnswer} busy={busy} />
+          <PlayerAnswer key={`${view.questionIndex}-${q.id}`} q={q} onAnswer={onAnswer} busy={busy} slippery={!!banana} />
+          {smoke && smokeGone !== view.questionIndex && (
+            <SmokeOverlay key={view.questionIndex} from={smoke.from} onClear={() => setSmokeGone(view.questionIndex)} />
+          )}
         </section>
       );
 
     case "reveal":
-      return <PlayerResult view={view} />;
+      return (
+        <>
+          <PlayerResult view={view} />
+          <div className="p-after">
+            {pocket}
+            <ReactionBar />
+          </div>
+        </>
+      );
 
     case "leaderboard":
-      return <PlayerStanding view={view} />;
+      return (
+        <>
+          <PlayerStanding view={view} />
+          <div className="p-after">
+            {pocket}
+            <ReactionBar />
+          </div>
+        </>
+      );
 
     case "podium":
-      return <PlayerFinish view={view} />;
+      return (
+        <>
+          <PlayerFinish view={view} />
+          <div className="p-after">
+            <ReactionBar />
+          </div>
+        </>
+      );
   }
 }
 
@@ -418,6 +492,11 @@ function PlayerResult({ view }: { view: PlayerView }) {
       {!poll && !noPoints && (
         <p className="p-result__pts" aria-label={`${r.points} points`}>
           +{pts.toLocaleString()}
+        </p>
+      )}
+      {!poll && r.multiplier > 1 && r.points > 0 && (
+        <p className="p-result__mult">
+          ×{r.multiplier} {view.turbo > 1 && view.nitro ? "turbo + nitro" : view.turbo > 1 ? "turbo" : "nitro"}
         </p>
       )}
       {!poll && r.answered && r.timeMs != null && <p className="hint">Answered in {seconds(r.timeMs)}</p>}
